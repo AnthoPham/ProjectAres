@@ -128,10 +128,12 @@ socket.on('encounter_state', data => {
   }
 });
 socket.on('encounter_end', data => {
-  document.getElementById('live-panel').style.display = 'none';
-  document.getElementById('pull-label').textContent = '';
   pulls.push(data);
   renderProgression();
+  // Show final stats instead of hiding
+  document.getElementById('pull-label').textContent = `PULL ${data.pull_id} - ${data.outcome.toUpperCase()} ${formatDuration(data.duration_secs)}`;
+  document.getElementById('party-dps').textContent = 'FINAL DPS  ' + fmtNum(data.party_dps) + '    TOTAL DMG  ' + fmtNum(data.combatants?.reduce((s,c) => s + (c.total_damage||0), 0) || 0);
+  if (data.combatants) renderCombatants(data.combatants.map(c => ({...c, dps: c.total_damage / data.duration_secs, pct: 100})));
 });
 socket.on('combat_event', data => {
   const feed = document.getElementById('log-feed');

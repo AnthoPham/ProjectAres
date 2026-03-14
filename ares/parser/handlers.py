@@ -158,6 +158,7 @@ class ActorControlSelfHandler:
             self._handle_dot_hot(header, payload, category)
 
     def _handle_dot_hot(self, header, payload, category):
+        log.debug(f"DoT/HoT raw: cat={category} payload=[{payload[:32].hex(' ')}]")
         buff_id = struct.unpack_from('<I', payload, 4)[0]
         amount = struct.unpack_from('<I', payload, 8)[0]
         source_id = struct.unpack_from('<I', payload, 12)[0]
