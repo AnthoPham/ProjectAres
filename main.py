@@ -9,6 +9,7 @@ Use --inject to self-inject the DLL (requires Administrator).
 """
 import argparse
 import logging
+import os
 import threading
 import time
 from datetime import datetime, timezone
@@ -118,12 +119,15 @@ def main():
     cfg = Config()
     log.info(f"Loaded config for patch {cfg.patch}")
 
-    session = Session(log_dir='logs')
-    writer = LogWriter(log_dir='logs')
+    log_dir = os.path.join(project_dir, 'logs')
+    session = Session(log_dir=log_dir)
+    writer = LogWriter(log_dir=log_dir)
     writer.open_session(datetime.now(timezone.utc))
     memory = MemoryReader(cfg)
 
-    deucalion = DeucalionManager(dll_path='bin/deucalion.dll', allow_inject=args.inject)
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+    dll_path = os.path.join(project_dir, 'bin', 'deucalion.dll')
+    deucalion = DeucalionManager(dll_path=dll_path, allow_inject=args.inject)
     app, socketio = create_app(session=session, deucalion_mgr=deucalion)
 
     # Register encounter callbacks to broadcast over WebSocket
