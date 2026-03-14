@@ -76,6 +76,11 @@ class ActionEffectHandler:
         # Target IDs are u64 in the target list
         target_id = struct.unpack_from('<Q', payload, self._OFF_TARGET_ID)[0] & 0xFFFFFFFF
 
+        # Debug: dump first 128 bytes of payload to identify correct offsets
+        log.debug(f"AE payload ({len(payload)} bytes): {payload[:128].hex(' ')}")
+        log.debug(f"  source={source_id:08X} action={action_id:08X} target={target_id:08X}")
+        log.debug(f"  header.epoch={header.epoch} header.timestamp={header.timestamp}")
+
         source = self._combatants.get_by_id(source_id)
         target = self._combatants.get_by_id(target_id)
         source_name = source.name if source else f"{source_id:08X}"
