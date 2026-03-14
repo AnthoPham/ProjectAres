@@ -71,7 +71,7 @@ def build_router(cfg: Config, writer: LogWriter, memory: MemoryReader,
     return router
 
 
-def broadcast_loop(socketio, session: Session):
+def broadcast_loop(socketio, session: Session, memory: MemoryReader):
     """Emit encounter_state every 1 second during active encounter."""
     while True:
         enc = session.encounter_mgr.current
@@ -82,8 +82,11 @@ def broadcast_loop(socketio, session: Session):
             for s in sorted(enc.combatant_stats.values(), key=lambda x: -x.total_damage):
                 dps = s.total_damage / duration if duration > 0 else 0
                 pct = (s.total_damage / total_dmg * 100) if total_dmg > 0 else 0
+                # Resolve name from memory reader if available
+                combatant = memory.get_by_id(s.actor_id)
+                name = combatant.name if combatant else s.name or f"{s.actor_id:08X}"
                 combatants.append({
-                    'name': s.name or f"{s.actor_id:08X}",
+                    'name': name,
                     'job': s.job,
                     'dps': round(dps),
                     'pct': round(pct, 1),
@@ -131,6 +134,11 @@ def main():
     writer = LogWriter(log_dir=log_dir)
     writer.open_session(datetime.now(timezone.utc))
     memory = MemoryReader(cfg)
+    if memory.attach():
+        memory.start()
+        log.info("Memory reader attached - combatant names available")
+    else:
+        log.info("Memory reader not attached - using hex IDs (run as admin for name resolution)")
 
     dll_path = os.path.join(project_dir, 'bin', 'deucalion.dll')
     deucalion = DeucalionManager(dll_path=dll_path, allow_inject=args.inject)
@@ -146,10 +154,9 @@ def main():
 
     # Start background services
     deucalion.start()
-    memory.start()
 
     # Broadcast loop in background thread
-    t = threading.Thread(target=broadcast_loop, args=(socketio, session), daemon=True)
+    t = threading.Thread(target=broadcast_loop, args=(socketio, session, memory), daemon=True)
     t.start()
 
     # Ticker thread for encounter timeout detection
