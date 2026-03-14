@@ -14,10 +14,10 @@ def test_first_damage_starts_encounter():
     assert mgr.current is not None
     assert mgr.current.active is True
 
-def test_no_combat_for_5s_ends_encounter():
-    mgr = EncounterManager(timeout_secs=5)
+def test_no_combat_for_timeout_ends_encounter():
+    mgr = EncounterManager(timeout_secs=15)
     mgr.on_action_effect(source_id=0x1234, target_id=0x5678, damage=5000, timestamp=ts(0))
-    mgr.tick(ts(6))
+    mgr.tick(ts(16))
     assert mgr.current is None
     assert len(mgr.completed) == 1
     assert mgr.completed[0].outcome == EncounterOutcome.TIMEOUT
@@ -47,10 +47,10 @@ def test_dps_calculation():
     assert abs(stats.dps - 2000.0) < 1.0
 
 def test_multiple_pulls_tracked():
-    mgr = EncounterManager(timeout_secs=5)
+    mgr = EncounterManager(timeout_secs=15)
     mgr.on_action_effect(source_id=0x1234, target_id=0x5678, damage=5000, timestamp=ts(0))
-    mgr.tick(ts(6))  # end pull 1
-    mgr.on_action_effect(source_id=0x1234, target_id=0x5678, damage=5000, timestamp=ts(10))
+    mgr.tick(ts(16))  # end pull 1
+    mgr.on_action_effect(source_id=0x1234, target_id=0x5678, damage=5000, timestamp=ts(20))
     assert mgr.current is not None
     assert len(mgr.completed) == 1
     assert mgr.current.pull_id == 2

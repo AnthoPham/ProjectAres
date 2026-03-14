@@ -70,15 +70,15 @@ class ActionEffectHandler:
 
     def __call__(self, header: IPCHeader):
         payload = header.payload
-        if len(payload) < self._OFF_TARGET_ID + 8:
+        if len(payload) < self._OFF_EFFECTS + 8:
             log.debug(f"ActionEffect payload too short: {len(payload)}")
             return
 
         # Source actor comes from the segment header, not the payload
         source_id = header.source_actor
         action_id = struct.unpack_from('<I', payload, self._OFF_ACTION_ID)[0]
-        # Target IDs are u64 in the target list
-        target_id = struct.unpack_from('<Q', payload, self._OFF_TARGET_ID)[0] & 0xFFFFFFFF
+        # Primary target from animationTargetId at offset 0x00
+        target_id = struct.unpack_from('<I', payload, self._OFF_ANIM_TARGET)[0]
 
         # Use wall clock time - the IPC header epoch field is unreliable
         # (observed epoch=64 which is clearly wrong; likely a different field)

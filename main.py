@@ -49,7 +49,7 @@ def build_router(cfg: Config, writer: LogWriter, memory: MemoryReader,
                 source_id=h.last_source_id,
                 target_id=h.last_target_id,
                 damage=h.last_damage,
-                timestamp=header.timestamp
+                timestamp=datetime.now(timezone.utc)
             )
         return handle
 

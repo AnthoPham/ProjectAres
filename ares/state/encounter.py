@@ -93,7 +93,7 @@ class Encounter:
 
 
 class EncounterManager:
-    def __init__(self, timeout_secs: float = 5.0):
+    def __init__(self, timeout_secs: float = 15.0):
         self._timeout = timeout_secs
         self._pull_counter = 0
         self.current: Optional[Encounter] = None
