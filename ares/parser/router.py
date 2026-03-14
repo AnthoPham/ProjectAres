@@ -2,13 +2,11 @@
 import struct
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Callable, Optional
 from ares.config import Config
 
 log = logging.getLogger(__name__)
-
-_EPOCH_BASE = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 # Deucalion data layout:
 #   Segment header (16 bytes):
@@ -89,7 +87,10 @@ class IPCHeader:
 
     @property
     def timestamp(self) -> datetime:
-        return _EPOCH_BASE + timedelta(seconds=self.epoch)
+        # The IPC header epoch field does not contain a valid Unix timestamp
+        # in patch 7.45 (observed value: 64 / 0x40). Return wall-clock time
+        # so all handlers get a consistent, usable timestamp.
+        return datetime.now(timezone.utc)
 
 
 HandlerFn = Callable[[IPCHeader], None]

@@ -1,10 +1,10 @@
 # ares/parser/handlers.py
 import struct
 import logging
-from datetime import datetime
 from typing import Optional
 from ares.parser.router import IPCHeader
 from ares.log.writer import LogWriter, LogMessageType
+from ares.data.actions import get_action_name
 
 log = logging.getLogger(__name__)
 
@@ -80,10 +80,6 @@ class ActionEffectHandler:
         # Primary target from animationTargetId at offset 0x00
         target_id = struct.unpack_from('<I', payload, self._OFF_ANIM_TARGET)[0]
 
-        # Use wall clock time - the IPC header epoch field is unreliable
-        # (observed epoch=64 which is clearly wrong; likely a different field)
-        now = datetime.now()
-
         source = self._combatants.get_by_id(source_id)
         target = self._combatants.get_by_id(target_id)
         source_name = source.name if source else f"{source_id:08X}"
@@ -116,12 +112,12 @@ class ActionEffectHandler:
 
         msg_type = LogMessageType.ActionEffect if self._target_count == 1 else LogMessageType.AOEActionEffect
         payload_str = (
-            f"{source_id:08X}|{source_name}|{action_id:08X}|Action_{action_id:X}|"
+            f"{source_id:08X}|{source_name}|{action_id:08X}|{get_action_name(action_id)}|"
             f"{target_id:08X}|{target_name}|{effect_str}|"
             f"0|0|0|0|0.00|0.00|0.00|0.00|"   # target HP (enriched by memory reader when available)
             f"0|0|0|0|0.00|0.00|0.00|0.00"    # source HP
         )
-        self._writer.write(msg_type, now, payload_str)
+        self._writer.write(msg_type, header.timestamp, payload_str)
 
 
 class DeathHandler:
