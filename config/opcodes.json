@@ -15,7 +15,6 @@
   "UpdateHpMpTp":     "0x00E7",
   "AddCombatant":     "0x0357",
   "RemoveCombatant":  "0x0298",
-  "DoTList":          "0x026F",
   "WaymarkPreset":    "0x00B7",
   "ActorMove":        "0x027D"
 }

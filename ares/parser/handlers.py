@@ -120,17 +120,117 @@ class ActionEffectHandler:
         self._writer.write(msg_type, header.timestamp, payload_str)
 
 
-class DeathHandler:
-    def __init__(self, log_writer: LogWriter, combatant_manager):
+class ActorControlSelfHandler:
+    """Handles ActorControlSelf packets (opcode 0x0217).
+
+    DoT/HoT ticks arrive as ActorControlSelf with:
+      - category 23 (0x17) = HoT tick
+      - category 24 (0x18) = DoT tick
+
+    Payload layout (after 32-byte segment+IPC header):
+      offset 0:  u16 category
+      offset 2:  u16 padding
+      offset 4:  u32 param1 (buffId)
+      offset 8:  u32 param2 (damage/heal amount)
+      offset 12: u32 param3 (sourceActorId)
+      offset 16: u32 param4 (currentHp)
+      offset 20: u32 param5 (maxHp)
+    """
+
+    CAT_HOT = 23   # 0x17
+    CAT_DOT = 24   # 0x18
+
+    def __init__(self, log_writer: LogWriter, combatant_manager, encounter_manager=None):
         self._writer = log_writer
         self._combatants = combatant_manager
+        self._encounter_mgr = encounter_manager
+        self.last_damage = 0
+        self.last_source_id = 0
+        self.last_target_id = 0
 
     def __call__(self, header: IPCHeader):
         payload = header.payload
-        if len(payload) < 8:
+        if len(payload) < 24:
             return
-        target_id = struct.unpack_from('<I', payload, 0)[0]
-        source_id = struct.unpack_from('<I', payload, 4)[0]
+        category = struct.unpack_from('<H', payload, 0)[0]
+
+        if category in (self.CAT_HOT, self.CAT_DOT):
+            self._handle_dot_hot(header, payload, category)
+
+    def _handle_dot_hot(self, header, payload, category):
+        buff_id = struct.unpack_from('<I', payload, 4)[0]
+        amount = struct.unpack_from('<I', payload, 8)[0]
+        source_id = struct.unpack_from('<I', payload, 12)[0]
+        cur_hp = struct.unpack_from('<I', payload, 16)[0]
+        max_hp = struct.unpack_from('<I', payload, 20)[0]
+
+        # ActorControlSelf: the segment header source_actor is the target (self)
+        target_id = header.source_actor
+
+        is_dot = category == self.CAT_DOT
+
+        target = self._combatants.get_by_id(target_id)
+        source = self._combatants.get_by_id(source_id)
+        target_name = target.name if target else f"{target_id:08X}"
+        source_name = source.name if source else f"{source_id:08X}"
+
+        # Track for encounter manager - only DoT damage counts
+        if is_dot:
+            self.last_damage = amount
+            self.last_source_id = source_id
+            self.last_target_id = target_id
+            if self._encounter_mgr:
+                self._encounter_mgr.on_action_effect(
+                    source_id=source_id, target_id=target_id,
+                    damage=amount, timestamp=header.timestamp
+                )
+
+        payload_str = (
+            f"{target_id:08X}|{target_name}|{'HoT' if not is_dot else 'DoT'}|"
+            f"{buff_id:X}|{amount:X}|{cur_hp}|{max_hp}|0|0|0.00|0.00|0.00|0.00|"
+            f"{source_id:08X}|{source_name}|0|0|0|0|0|0.00|0.00|0.00|0.00"
+        )
+        self._writer.write(LogMessageType.DoTHoT, header.timestamp, payload_str)
+
+
+class ActorControlHandler:
+    """Handles ActorControl packets (opcode 0x020B).
+
+    Processes death events and combat state changes.
+
+    Payload layout (after 32-byte segment+IPC header):
+      offset 0:  u16 category
+      offset 2:  u16 padding
+      offset 4:  u32 param1
+      offset 8:  u32 param2
+      offset 12: u32 param3
+      offset 16: u32 param4
+    """
+
+    CAT_TOGGLE_COMBAT = 0    # param1=1 enter combat, param1=0 leave combat
+    CAT_DEATH = 6
+
+    def __init__(self, log_writer: LogWriter, combatant_manager, encounter_manager=None):
+        self._writer = log_writer
+        self._combatants = combatant_manager
+        self._encounter_mgr = encounter_manager
+
+    def __call__(self, header: IPCHeader):
+        payload = header.payload
+        if len(payload) < 16:
+            return
+        category = struct.unpack_from('<H', payload, 0)[0]
+        param1 = struct.unpack_from('<I', payload, 4)[0]
+        param2 = struct.unpack_from('<I', payload, 8)[0]
+
+        if category == self.CAT_DEATH:
+            self._handle_death(header, param1, param2)
+        elif category == self.CAT_TOGGLE_COMBAT:
+            self._handle_combat_toggle(header, param1)
+
+    def _handle_death(self, header, param1, param2):
+        target_id = header.source_actor
+        source_id = param1
 
         target = self._combatants.get_by_id(target_id)
         source = self._combatants.get_by_id(source_id)
@@ -140,27 +240,20 @@ class DeathHandler:
         payload_str = f"{target_id:08X}|{target_name}|{source_id:08X}|{source_name}"
         self._writer.write(LogMessageType.Death, header.timestamp, payload_str)
 
+        if self._encounter_mgr:
+            self._encounter_mgr.on_death(
+                target_id=target_id, source_id=source_id,
+                timestamp=header.timestamp
+            )
 
-class DoTHoTHandler:
-    def __init__(self, log_writer: LogWriter, combatant_manager):
-        self._writer = log_writer
-        self._combatants = combatant_manager
+    def _handle_combat_toggle(self, header, param1):
+        # param1 = 1 means entering combat, param1 = 0 means leaving
+        if param1 == 0 and self._encounter_mgr:
+            # Combat ended signal - let timeout handle it rather than
+            # immediately ending, since multiple actors send this
+            log.debug(f"Combat toggle OFF for actor {header.source_actor:08X}")
 
-    def __call__(self, header: IPCHeader):
-        payload = header.payload
-        if len(payload) < 24:
-            return
-        target_id, source_id, dot_type, buff_id, amount = struct.unpack_from('<IIIHHxxxx', payload, 0)
 
-        target = self._combatants.get_by_id(target_id)
-        source = self._combatants.get_by_id(source_id)
-        target_name = target.name if target else f"{target_id:08X}"
-        source_name = source.name if source else f"{source_id:08X}"
-
-        is_heal = dot_type == 1
-        payload_str = (
-            f"{target_id:08X}|{target_name}|{'HoT' if is_heal else 'DoT'}|"
-            f"{buff_id:X}|{amount:X}|0|0|0|0|0.00|0.00|0.00|0.00|"
-            f"{source_id:08X}|{source_name}|0|0|0|0|0|0.00|0.00|0.00|0.00"
-        )
-        self._writer.write(LogMessageType.DoTHoT, header.timestamp, payload_str)
+# Keep old class names as aliases for backward compatibility in tests
+DeathHandler = ActorControlHandler
+DoTHoTHandler = ActorControlSelfHandler

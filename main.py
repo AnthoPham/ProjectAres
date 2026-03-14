@@ -24,7 +24,7 @@ from ares.config import Config
 from ares.deucalion.manager import DeucalionManager
 from ares.log.writer import LogWriter, LogMessageType
 from ares.memory.reader import MemoryReader
-from ares.parser.handlers import ActionEffectHandler, DeathHandler, DoTHoTHandler
+from ares.parser.handlers import ActionEffectHandler, ActorControlHandler, ActorControlSelfHandler
 from ares.parser.router import PacketRouter
 from ares.server.app import create_app
 from ares.state.session import Session
@@ -58,15 +58,21 @@ def build_router(cfg: Config, writer: LogWriter, memory: MemoryReader,
         if opcode:
             router.register(opcode, make_ae_handler(opcode, count))
 
-    death_handler = DeathHandler(log_writer=writer, combatant_manager=memory)
-    death_opcode = cfg.opcode('ActorControl')
-    if death_opcode:
-        router.register(death_opcode, death_handler)
+    # ActorControl (0x020B) - handles death events and combat state
+    ac_handler = ActorControlHandler(
+        log_writer=writer, combatant_manager=memory, encounter_manager=enc_mgr
+    )
+    ac_opcode = cfg.opcode('ActorControl')
+    if ac_opcode:
+        router.register(ac_opcode, ac_handler)
 
-    dot_handler = DoTHoTHandler(log_writer=writer, combatant_manager=memory)
-    dot_opcode = cfg.opcode('DoTList')
-    if dot_opcode:
-        router.register(dot_opcode, dot_handler)
+    # ActorControlSelf (0x0217) - handles DoT/HoT ticks
+    acs_handler = ActorControlSelfHandler(
+        log_writer=writer, combatant_manager=memory, encounter_manager=enc_mgr
+    )
+    acs_opcode = cfg.opcode('ActorControlSelf')
+    if acs_opcode:
+        router.register(acs_opcode, acs_handler)
 
     return router
 
