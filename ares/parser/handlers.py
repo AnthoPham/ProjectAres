@@ -108,13 +108,10 @@ class ActionEffectHandler:
         for lo, hi in effects:
             effect_type = lo & 0xFF
             if effect_type == EFFECT_TYPE_DAMAGE:
-                flags = (lo >> 8) & 0xFF
-                # Primary damage value is in hi >> 16 (matches ACT hi field)
-                raw_damage = (hi >> 16) & 0xFFFF
-                # If flag bit 6 is set, extra bits come from lo
-                if flags & 0x40:
-                    raw_damage |= ((lo >> 16) & 0xFFFF) << 16
-                self.last_damage = raw_damage
+                # Damage value is in hi >> 16 (the upper 16 bits of the hi dword)
+                # This matches the ACT log format where damage appears as e.g. E420000
+                # meaning 0x0E42 = 3650 damage
+                self.last_damage = (hi >> 16) & 0xFFFF
                 break
 
         msg_type = LogMessageType.ActionEffect if self._target_count == 1 else LogMessageType.AOEActionEffect
