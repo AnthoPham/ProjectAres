@@ -35,6 +35,22 @@ def build_router(cfg: Config, writer: LogWriter, memory: MemoryReader,
     router = PacketRouter(cfg)
     enc_mgr = session.encounter_mgr
 
+    # Track party members -- any player (0x10xxxxxx) who hits an NPC (0x40xxxxxx)
+    # is considered a party member. This auto-detects your party during combat.
+    party_members = set()
+
+    def is_party_action(source_id: int, target_id: int) -> bool:
+        """Check if this action is from a party member hitting an enemy."""
+        is_player = (source_id & 0xFF000000) == 0x10000000
+        is_enemy_target = (target_id & 0xFF000000) == 0x40000000
+        if is_player and is_enemy_target:
+            if source_id not in party_members:
+                party_members.add(source_id)
+                log.info(f"Detected party member: {source_id:08X} ({len(party_members)} total)")
+            return True
+        # Also accept if source is a known party member (e.g. self-buffs)
+        return source_id in party_members
+
     def make_ae_handler(opcode: int, target_count: int):
         h = ActionEffectHandler(
             opcode=opcode,
@@ -44,7 +60,8 @@ def build_router(cfg: Config, writer: LogWriter, memory: MemoryReader,
         )
         def handle(header):
             h(header)
-            # Feed real values into encounter state
+            if not is_party_action(h.last_source_id, h.last_target_id):
+                return
             enc_mgr.on_action_effect(
                 source_id=h.last_source_id,
                 target_id=h.last_target_id,
@@ -68,11 +85,21 @@ def build_router(cfg: Config, writer: LogWriter, memory: MemoryReader,
 
     # ActorControlSelf (0x0217) - handles DoT/HoT ticks
     acs_handler = ActorControlSelfHandler(
-        log_writer=writer, combatant_manager=memory, encounter_manager=enc_mgr
+        log_writer=writer, combatant_manager=memory, encounter_manager=None
     )
+    def handle_acs(header):
+        acs_handler(header)
+        # Only feed DoT damage into encounter if source is a party member
+        if acs_handler.last_damage > 0 and acs_handler.last_source_id in party_members:
+            enc_mgr.on_action_effect(
+                source_id=acs_handler.last_source_id,
+                target_id=acs_handler.last_target_id,
+                damage=acs_handler.last_damage,
+                timestamp=header.timestamp
+            )
     acs_opcode = cfg.opcode('ActorControlSelf')
     if acs_opcode:
-        router.register(acs_opcode, acs_handler)
+        router.register(acs_opcode, handle_acs)
 
     return router
 
