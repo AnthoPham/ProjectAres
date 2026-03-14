@@ -297,10 +297,11 @@ class DeucalionManager:
             if op in (3, 4):
                 # op=3: Recv (server->client), op=4: Send (client->server)
                 if len(data) >= 16:
-                    # Log the IPC opcode for debugging
+                    # Log IPC header bytes for debugging
+                    hdr_hex = data[:20].hex(' ')
                     ipc_opcode = struct.unpack_from('<H', data, 2)[0]
-                    log.debug(f"IPC frame: op={op} ipc_opcode=0x{ipc_opcode:04X} "
-                              f"data_len={len(data)}")
+                    log.debug(f"IPC: opcode=0x{ipc_opcode:04X} len={len(data)} "
+                              f"hdr=[{hdr_hex}]")
 
                 frame = DeucalionFrame(op=op, channel=op, data=data)
                 for cb in self._callbacks:
