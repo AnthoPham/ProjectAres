@@ -52,15 +52,18 @@ def test_full_pipeline_writes_log(tmp_path):
 
     router.register(0x00A3, combined_handler)
 
-    # Simulate a Deucalion frame
+    # Build IPC payload
     ipc_payload = bytearray(256)
     struct.pack_into('<I', ipc_payload, 0, 0x12345678)  # source_id
     struct.pack_into('<I', ipc_payload, 4, 0x0009)       # action_id
     struct.pack_into('<I', ipc_payload, 88, 0x87654321)  # target_id
-    ipc_header = struct.pack('<HHHHI', 0x0014, 0x00A3, 0, 1, 1000000) + b'\x00' * 4
-    ipc_data = ipc_header + bytes(ipc_payload)
-    frame = DeucalionFrame(op=1, channel=1, data=ipc_data)
 
+    # Build segment header (16 bytes) + IPC header (16 bytes) + payload
+    seg_header = struct.pack('<II8s', 0x12345678, 0x87654321, b'\x00' * 8)
+    ipc_header = struct.pack('<HHHHI', 0x0014, 0x00A3, 0, 1, 1000000) + b'\x00' * 4
+    full_data = seg_header + ipc_header + bytes(ipc_payload)
+
+    frame = DeucalionFrame(op=3, channel=3, data=full_data)
     router.dispatch(frame)
 
     # Verify log was written

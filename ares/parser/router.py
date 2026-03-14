@@ -10,11 +10,28 @@ log = logging.getLogger(__name__)
 
 _EPOCH_BASE = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
+# Deucalion data layout:
+#   Segment header (16 bytes):
+#     source_actor: u32 (0-3)
+#     target_actor: u32 (4-7)
+#     segment_data: u64 (8-15, timestamp + flags)
+#   IPC header (16 bytes, starting at offset 16):
+#     magic: u16 = 0x0014 (16-17)
+#     opcode: u16 (18-19)
+#     padding: u16 (20-21)
+#     server_id: u16 (22-23)
+#     epoch: u32 (24-27)
+#     padding: u32 (28-31)
+#   IPC payload (starting at offset 32)
+SEGMENT_HEADER_SIZE = 16
+IPC_HEADER_SIZE = 16
+TOTAL_HEADER_SIZE = SEGMENT_HEADER_SIZE + IPC_HEADER_SIZE
+
 
 @dataclass
 class DeucalionFrame:
-    op: int       # 1=Recv, 2=Send, 3=Ping, 4=Pong
-    channel: int  # 1=recv, 2=send
+    op: int       # 3=Recv, 4=Send
+    channel: int
     data: bytes
 
     @classmethod
@@ -29,24 +46,50 @@ class DeucalionFrame:
 
 
 @dataclass
+class SegmentHeader:
+    source_actor: int
+    target_actor: int
+
+    @classmethod
+    def from_bytes(cls, data: bytes) -> 'SegmentHeader':
+        if len(data) < SEGMENT_HEADER_SIZE:
+            raise ValueError(f"Segment data too short: {len(data)} bytes")
+        source, target = struct.unpack_from('<II', data, 0)
+        return cls(source_actor=source, target_actor=target)
+
+
+@dataclass
 class IPCHeader:
     magic: int
     opcode: int
     server_id: int
-    epoch: int    # milliseconds since unix epoch
+    epoch: int
+    source_actor: int
+    target_actor: int
     payload: bytes
 
     @classmethod
     def from_bytes(cls, data: bytes) -> 'IPCHeader':
-        if len(data) < 16:
-            raise ValueError(f"IPC data too short: {len(data)} bytes")
-        magic, opcode, _pad, server_id, epoch = struct.unpack_from('<HHHHI', data, 0)
-        payload = data[16:]
-        return cls(magic=magic, opcode=opcode, server_id=server_id, epoch=epoch, payload=payload)
+        if len(data) < TOTAL_HEADER_SIZE:
+            raise ValueError(f"Data too short for segment+IPC: {len(data)} bytes")
+
+        # Parse segment header
+        source_actor, target_actor = struct.unpack_from('<II', data, 0)
+
+        # Parse IPC header (at offset 16)
+        magic, opcode, _pad, server_id, epoch = struct.unpack_from(
+            '<HHHHI', data, SEGMENT_HEADER_SIZE
+        )
+
+        payload = data[TOTAL_HEADER_SIZE:]
+        return cls(
+            magic=magic, opcode=opcode, server_id=server_id, epoch=epoch,
+            source_actor=source_actor, target_actor=target_actor, payload=payload
+        )
 
     @property
     def timestamp(self) -> datetime:
-        return _EPOCH_BASE + timedelta(milliseconds=self.epoch)
+        return _EPOCH_BASE + timedelta(seconds=self.epoch)
 
 
 HandlerFn = Callable[[IPCHeader], None]
@@ -61,7 +104,7 @@ class PacketRouter:
         self._handlers[opcode] = handler
 
     def dispatch(self, frame: DeucalionFrame):
-        if frame.op not in (1, 2):  # only Recv/Send IPC frames
+        if frame.op not in (3, 4):  # only Recv/Send IPC frames
             return
         try:
             header = IPCHeader.from_bytes(frame.data)

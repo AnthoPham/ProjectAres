@@ -3,16 +3,19 @@ import struct
 import pytest
 from datetime import datetime, timezone, timedelta
 from unittest.mock import MagicMock, patch
-from ares.parser.router import IPCHeader
+from ares.parser.router import IPCHeader, SEGMENT_HEADER_SIZE
 from ares.parser.handlers import ActionEffectHandler
 from ares.log.writer import LogMessageType
 
-def make_header(opcode: int, payload: bytes, epoch_ms: int = 1000000) -> IPCHeader:
+def make_header(opcode: int, payload: bytes, epoch: int = 1000000,
+                source_actor: int = 0x12345678) -> IPCHeader:
     return IPCHeader(
         magic=0x0014,
         opcode=opcode,
         server_id=1,
-        epoch=epoch_ms,
+        epoch=epoch,
+        source_actor=source_actor,
+        target_actor=source_actor,
         payload=payload
     )
 
@@ -27,7 +30,6 @@ def make_action_effect1_payload(
     struct.pack_into('<I', buf, 4, action_id)
     struct.pack_into('<H', buf, 8, action_id)  # animation_id
     struct.pack_into('<B', buf, 20, 1)          # num_targets = 1
-    # effect slot 0: type=3 (damage), param=damage
     struct.pack_into('<BBHBBH', buf, 24, 3, 0, damage & 0xFFFF, 0, 0, 0)
     struct.pack_into('<I', buf, 88, target_id)
     return bytes(buf)

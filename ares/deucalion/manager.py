@@ -296,12 +296,11 @@ class DeucalionManager:
 
             if op in (3, 4):
                 # op=3: Recv (server->client), op=4: Send (client->server)
-                if len(data) >= 16:
-                    # Log IPC header bytes for debugging
-                    hdr_hex = data[:20].hex(' ')
-                    ipc_opcode = struct.unpack_from('<H', data, 2)[0]
-                    log.debug(f"IPC: opcode=0x{ipc_opcode:04X} len={len(data)} "
-                              f"hdr=[{hdr_hex}]")
+                if len(data) >= 32:
+                    # Segment header (16 bytes) + IPC header (16 bytes)
+                    # Real opcode is at offset 18 (after 16-byte segment header + 2-byte magic)
+                    ipc_opcode = struct.unpack_from('<H', data, 18)[0]
+                    log.debug(f"IPC: opcode=0x{ipc_opcode:04X} len={len(data)}")
 
                 frame = DeucalionFrame(op=op, channel=op, data=data)
                 for cb in self._callbacks:
