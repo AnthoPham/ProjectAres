@@ -1,11 +1,12 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(cd:*)",
+      "Bash(ACT_LOG=\"C:/Users/Mark IV/AppData/Roaming/Advanced Combat Tracker/FFXIVLogs/Network_30101_20260313.log\"\n\"D:/Anaconda3/envs/ProjectClaude/python.exe\" -c \"\nimport sys\ntotal = 0\ncount = 0\nfirst_ts = None\nlast_ts = None\nfor line in open\\(sys.argv[1], encoding='utf-8', errors='replace'\\):\n    if not line.startswith\\('21|'\\): continue\n    parts = line.strip\\(\\).split\\('|'\\)\n    ts = parts[1]\n    if '09:48' not in ts and '09:49' not in ts and '09:5' not in ts: continue\n    count += 1\n    if first_ts is None: first_ts = ts\n    last_ts = ts\n    for i in range\\(8, min\\(len\\(parts\\), 24\\), 2\\):\n        val = parts[i]\n        if val == '0' or not val: continue\n        try:\n            v = int\\(val, 16\\)\n            etype = v & 0xFF\n            if etype == 3:\n                hi = int\\(parts[i+1], 16\\) if i+1 < len\\(parts\\) else 0\n                dmg = \\(hi >> 16\\) & 0xFFFF\n                total += dmg\n        except: pass\nprint\\(f'ACT:  {count} actions, total damage = {total:,}'\\)\nprint\\(f'First: {first_ts}'\\)\nprint\\(f'Last:  {last_ts}'\\)\n\" \"$ACT_LOG\")"
+    ]
+  },
   "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "network-tools"
-  ],
-  "permissions": {
-    "allow": [
-      "Bash(cd:*)"
-    ]
-  }
+  ]
 }

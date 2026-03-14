@@ -119,7 +119,7 @@ socket.on('encounter_state', data => {
   if (data.boss_hp_pct != null) {
     document.getElementById('boss-hp-fill').style.width = data.boss_hp_pct + '%';
   }
-  document.getElementById('party-dps').textContent = 'PARTY DPS  ' + fmtNum(data.party_dps);
+  document.getElementById('party-dps').textContent = 'PARTY DPS  ' + fmtNum(data.party_dps) + '    TOTAL DMG  ' + fmtNum(data.total_damage);
   renderCombatants(data.combatants || []);
   const vs = data.vs_prev;
   if (vs) {
@@ -213,6 +213,7 @@ function renderCombatants(combatants) {
       <div class="cbar"><div class="cbar-fill" style="width:${(c.dps/maxDps*100).toFixed(1)}%"></div></div>
       <span class="cdps">${fmtNum(c.dps)}</span>
       <span class="cpct">${c.pct.toFixed(1)}%</span>
+      <span style="width:80px;text-align:right;color:#7a9ab8;font-size:11px">${fmtNum(c.total_damage)} dmg</span>
     </div>`).join('');
 }
 

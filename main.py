@@ -87,6 +87,7 @@ def broadcast_loop(socketio, session: Session):
                     'job': s.job,
                     'dps': round(dps),
                     'pct': round(pct, 1),
+                    'total_damage': s.total_damage,
                 })
             party_dps = total_dmg / duration if duration > 0 else 0
             payload = {
@@ -96,6 +97,7 @@ def broadcast_loop(socketio, session: Session):
                 'zone': enc.zone,
                 'boss_hp_pct': enc._current_boss_hp_pct,
                 'party_dps': round(party_dps),
+                'total_damage': total_dmg,
                 'combatants': combatants,
             }
             socketio.emit('encounter_state', payload)
