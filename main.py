@@ -116,6 +116,8 @@ def main():
         log.info("Passive mode: will connect to existing Deucalion pipe. "
                  "Use --inject to self-inject.")
 
+    project_dir = os.path.dirname(os.path.abspath(__file__))
+
     cfg = Config()
     log.info(f"Loaded config for patch {cfg.patch}")
 
@@ -125,7 +127,6 @@ def main():
     writer.open_session(datetime.now(timezone.utc))
     memory = MemoryReader(cfg)
 
-    project_dir = os.path.dirname(os.path.abspath(__file__))
     dll_path = os.path.join(project_dir, 'bin', 'deucalion.dll')
     deucalion = DeucalionManager(dll_path=dll_path, allow_inject=args.inject)
     app, socketio = create_app(session=session, deucalion_mgr=deucalion)
