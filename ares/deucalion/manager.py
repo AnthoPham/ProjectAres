@@ -20,6 +20,9 @@ GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
 OPEN_EXISTING = 3
 INVALID_HANDLE_VALUE = ctypes.wintypes.HANDLE(-1).value
+PIPE_READMODE_BYTE = 0x00000000
+PIPE_READMODE_MESSAGE = 0x00000002
+ERROR_MORE_DATA = 234
 
 
 def find_ffxiv_pid() -> Optional[int]:
@@ -60,17 +63,56 @@ def _open_pipe(pid: int) -> Optional[int]:
     return handle
 
 
+def _read_message(handle: int) -> bytes:
+    """Read a complete message from a Win32 message-mode pipe."""
+    # Start with a reasonable buffer size
+    buf_size = 65536
+    buf = ctypes.create_string_buffer(buf_size)
+    bytes_read = ctypes.wintypes.DWORD(0)
+
+    result = ctypes.windll.kernel32.ReadFile(
+        handle, buf, buf_size, ctypes.byref(bytes_read), None
+    )
+
+    if result:
+        # Complete message read
+        return buf.raw[:bytes_read.value]
+
+    error = ctypes.GetLastError()
+    if error == ERROR_MORE_DATA:
+        # Message larger than buffer -- collect remaining
+        data = buf.raw[:bytes_read.value]
+        while True:
+            buf2 = ctypes.create_string_buffer(buf_size)
+            bytes_read2 = ctypes.wintypes.DWORD(0)
+            result = ctypes.windll.kernel32.ReadFile(
+                handle, buf2, buf_size, ctypes.byref(bytes_read2), None
+            )
+            data += buf2.raw[:bytes_read2.value]
+            if result:
+                break
+            if ctypes.GetLastError() != ERROR_MORE_DATA:
+                raise OSError(f"Pipe read failed: error {ctypes.GetLastError()}")
+        return data
+
+    raise OSError(f"Pipe read failed: error {error}")
+
+
 def _read_pipe(handle: int, size: int) -> bytes:
-    """Read exactly size bytes from a Win32 pipe handle."""
+    """Read exactly size bytes from a Win32 pipe handle (byte mode)."""
     buf = ctypes.create_string_buffer(size)
     bytes_read = ctypes.wintypes.DWORD(0)
     result = ctypes.windll.kernel32.ReadFile(
         handle, buf, size, ctypes.byref(bytes_read), None
     )
-    if not result or bytes_read.value == 0:
-        raise OSError("Pipe read failed or closed")
+    if not result:
+        error = ctypes.GetLastError()
+        if error == ERROR_MORE_DATA:
+            log.debug(f"Pipe in message mode, got {bytes_read.value} of {size} bytes")
+        raise OSError(f"Pipe read failed: error {error}")
+    if bytes_read.value == 0:
+        raise OSError("Pipe closed")
     if bytes_read.value < size:
-        # Partial read -- collect remaining
         remaining = size - bytes_read.value
         data = buf.raw[:bytes_read.value]
         while remaining > 0:
@@ -135,6 +177,7 @@ class DeucalionManager:
         self._allow_inject = allow_inject
         self._pipe_handle = None
         self._pid: Optional[int] = None
+        self._message_mode = False
         self._callbacks: list[FrameCallback] = []
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -191,6 +234,18 @@ class DeucalionManager:
             log.warning(f"Could not open Deucalion pipe for PID {pid}")
             return False
 
+        # Try to set pipe to byte read mode for easier reading
+        mode = ctypes.wintypes.DWORD(PIPE_READMODE_BYTE)
+        result = ctypes.windll.kernel32.SetNamedPipeHandleState(
+            handle, ctypes.byref(mode), None, None
+        )
+        if result:
+            log.info("Pipe set to byte read mode")
+            self._message_mode = False
+        else:
+            log.info("Pipe staying in message mode (SetNamedPipeHandleState failed)")
+            self._message_mode = True
+
         self._pipe_handle = handle
         self.connected = True
         log.info(f"Connected to Deucalion pipe for PID {pid}")
@@ -234,23 +289,49 @@ class DeucalionManager:
 
     def _read_frames(self):
         while self._running and self._pipe_handle is not None:
-            # Read 4-byte frame header
-            header = _read_pipe(self._pipe_handle, 4)
+            if self._message_mode:
+                self._read_frame_message_mode()
+            else:
+                self._read_frame_byte_mode()
 
-            op, channel, length = struct.unpack('<BBH', header)
+    def _read_frame_message_mode(self):
+        """Read a complete pipe message and parse as Deucalion frame."""
+        raw = _read_message(self._pipe_handle)
+        if len(raw) < 4:
+            log.debug(f"Short message: {len(raw)} bytes")
+            return
 
-            # Skip ping frames
-            if op == 3:
-                continue
+        op, channel, length = struct.unpack_from('<BBH', raw, 0)
 
-            if length == 0:
-                continue
+        if op == 3:  # Ping
+            return
 
-            data = _read_pipe(self._pipe_handle, length)
+        data = raw[4:]
+        if len(data) < length:
+            log.debug(f"Message data shorter than header length: {len(data)} < {length}")
+            data = raw[4:]  # use what we have
 
-            frame = DeucalionFrame(op=op, channel=channel, data=data)
-            for cb in self._callbacks:
-                try:
-                    cb(frame)
-                except Exception as e:
-                    log.warning(f"Frame callback error: {e}")
+        frame = DeucalionFrame(op=op, channel=channel, data=data)
+        self._dispatch_frame(frame)
+
+    def _read_frame_byte_mode(self):
+        """Read frame header + data in byte mode."""
+        header = _read_pipe(self._pipe_handle, 4)
+        op, channel, length = struct.unpack('<BBH', header)
+
+        if op == 3:  # Ping
+            return
+
+        if length == 0:
+            return
+
+        data = _read_pipe(self._pipe_handle, length)
+        frame = DeucalionFrame(op=op, channel=channel, data=data)
+        self._dispatch_frame(frame)
+
+    def _dispatch_frame(self, frame: DeucalionFrame):
+        for cb in self._callbacks:
+            try:
+                cb(frame)
+            except Exception as e:
+                log.warning(f"Frame callback error: {e}")
