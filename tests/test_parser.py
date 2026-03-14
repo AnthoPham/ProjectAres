@@ -20,9 +20,9 @@ def make_deucalion_frame(opcode: int, payload: bytes) -> DeucalionFrame:
     return DeucalionFrame(op=3, channel=3, data=data)
 
 def test_parse_ipc_header():
-    data = make_ipc_bytes(0x00A3, b'\x00' * 32)
+    data = make_ipc_bytes(0x00B6, b'\x00' * 32)
     header = IPCHeader.from_bytes(data)
-    assert header.opcode == 0x00A3
+    assert header.opcode == 0x00B6
     assert header.epoch == 1000000
     assert header.source_actor == 0x12345678
     assert header.magic == 0x0014
@@ -39,16 +39,16 @@ def test_router_dispatches_to_handler():
         op_path = os.path.join(d, 'opcodes.json')
         off_path = os.path.join(d, 'offsets.json')
         with open(op_path, 'w') as f:
-            json.dump({"_patch": "7.3", "ActionEffect1": "0x00A3"}, f)
+            json.dump({"_patch": "7.3", "ActionEffect1": "0x00B6"}, f)
         with open(off_path, 'w') as f:
             json.dump({"_patch": "7.3", "actor_table": "0x0"}, f)
 
         cfg = Config(op_path, off_path)
         handler = MagicMock()
         router = PacketRouter(cfg)
-        router.register(0x00A3, handler)
+        router.register(0x00B6, handler)
 
-        frame = make_deucalion_frame(0x00A3, b'\x00' * 32)
+        frame = make_deucalion_frame(0x00B6, b'\x00' * 32)
         router.dispatch(frame)
         handler.assert_called_once()
 
@@ -77,14 +77,14 @@ def test_router_ignores_non_ipc_frames():
         op_path = os.path.join(d, 'opcodes.json')
         off_path = os.path.join(d, 'offsets.json')
         with open(op_path, 'w') as f:
-            json.dump({"_patch": "7.3", "ActionEffect1": "0x00A3"}, f)
+            json.dump({"_patch": "7.3", "ActionEffect1": "0x00B6"}, f)
         with open(off_path, 'w') as f:
             json.dump({"_patch": "7.3"}, f)
 
         cfg = Config(op_path, off_path)
         handler = MagicMock()
         router = PacketRouter(cfg)
-        router.register(0x00A3, handler)
+        router.register(0x00B6, handler)
 
         # op=1 (Ping) should be ignored
         frame = DeucalionFrame(op=1, channel=0, data=b'\x00' * 48)

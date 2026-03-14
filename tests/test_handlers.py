@@ -25,26 +25,28 @@ def make_action_effect1_payload(
     target_id: int = 0x87654321,
     damage: int = 5000,
 ) -> bytes:
-    """Build an ActionEffect1 IPC payload matching Sapphire/Machina struct layout.
+    """Build an ActionEffect1 IPC payload matching live-confirmed 0x00B6 layout.
 
-    Offsets (hex):
+    Offsets (hex) confirmed from Deucalion pipe + ACT cross-reference:
       0x00: animationTargetId (u32)
       0x08: actionId (u32)
-      0x1C: actionAnimationId (u16)
-      0x21: effectCount (u8)
-      0x24: effects[8] (8 x 8 bytes)
-      0x68: targetId[0] (u64)
+      0x24: actionAnimationId (u16)
+      0x29: effectCount (u8)
+      0x2A: effects[8] (8 x 8 bytes)
+      0x6E: targetId[0] (u64)
     """
     buf = bytearray(256)
     struct.pack_into('<I', buf, 0x00, target_id)   # animationTargetId (target, not source)
     struct.pack_into('<I', buf, 0x08, action_id)   # actionId
-    struct.pack_into('<H', buf, 0x1C, action_id)   # actionAnimationId
-    struct.pack_into('<B', buf, 0x21, 1)            # effectCount = 1
-    # Effect entry at 0x24: type=3 (damage), flags=0, value=damage in bits 16-31
-    effect_lo = 3 | ((damage & 0xFFFF) << 16)      # type DAMAGE + raw damage
-    struct.pack_into('<I', buf, 0x24, effect_lo)
-    struct.pack_into('<I', buf, 0x28, 0)            # effect hi
-    struct.pack_into('<Q', buf, 0x68, target_id)    # targetId (u64)
+    struct.pack_into('<H', buf, 0x24, action_id)   # actionAnimationId
+    struct.pack_into('<B', buf, 0x29, 1)            # effectCount = 1
+    # Effect entry at 0x2A: type=3 (damage), flags=0
+    # lo = type byte, hi = (damage << 16) matching ACT hi field encoding
+    effect_lo = 3                                   # type DAMAGE
+    effect_hi = (damage & 0xFFFF) << 16             # damage in hi >> 16
+    struct.pack_into('<I', buf, 0x2A, effect_lo)
+    struct.pack_into('<I', buf, 0x2E, effect_hi)
+    struct.pack_into('<Q', buf, 0x6E, target_id)    # targetId (u64)
     return bytes(buf)
 
 def test_action_effect_handler_writes_log():
@@ -53,14 +55,14 @@ def test_action_effect_handler_writes_log():
     combatant_mgr.get_by_id.return_value = None
 
     handler = ActionEffectHandler(
-        opcode=0x00A3,
+        opcode=0x00B6,
         log_writer=log_writer,
         combatant_manager=combatant_mgr,
         target_count=1
     )
 
     payload = make_action_effect1_payload()
-    header = make_header(0x00A3, payload)
+    header = make_header(0x00B6, payload)
     handler(header)
 
     assert log_writer.write.called
@@ -73,13 +75,13 @@ def test_single_target_produces_type_21():
     combatant_mgr.get_by_id.return_value = None
 
     handler = ActionEffectHandler(
-        opcode=0x00A3,
+        opcode=0x00B6,
         log_writer=log_writer,
         combatant_manager=combatant_mgr,
         target_count=1
     )
     payload = make_action_effect1_payload()
-    header = make_header(0x00A3, payload)
+    header = make_header(0x00B6, payload)
     handler(header)
 
     msg_type = log_writer.write.call_args[0][0]
