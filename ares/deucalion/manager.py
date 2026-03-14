@@ -265,21 +265,36 @@ class DeucalionManager:
                     self._pipe_handle = None
 
     def _read_frames(self):
+        """Read Deucalion v1.5 frames from pipe.
+
+        Wire format: length(u32 LE) | op(u8) | ctx(u32 LE) | data(bytes)
+        - length: total frame size including the 4-byte length field
+        - op: 0=Debug, 1=Ping, 2=Exit, 3=Recv, 4=Send, 9=Option
+        - ctx: context (unused by us)
+        - data: IPC payload (length - 9 bytes)
+        """
         while self._running and self._pipe_handle is not None:
             raw = _read_from_pipe(self._pipe_handle)
-            if len(raw) < 4:
-                log.debug(f"Short read: {len(raw)} bytes, skipping")
+            if len(raw) < 9:
+                # Minimum frame: 4(len) + 1(op) + 4(ctx) = 9 bytes
+                if len(raw) >= 5:
+                    frame_len, op = struct.unpack_from('<IB', raw, 0)
+                    log.debug(f"Short frame: op={op} len={frame_len} raw={len(raw)}")
                 continue
 
-            op, channel, length = struct.unpack_from('<BBH', raw, 0)
-            log.debug(f"Frame: op={op} ch={channel} len={length} raw_len={len(raw)}")
+            frame_len, op, ctx = struct.unpack_from('<IBI', raw, 0)
+            data = raw[9:]
 
-            # Skip ping/pong
-            if op in (3, 4):
+            log.debug(f"Frame: op={op} ctx={ctx} frame_len={frame_len} "
+                      f"data_len={len(data)} raw_len={len(raw)}")
+
+            # op=1: Ping, op=2: Exit, op=9: Option -- skip
+            if op not in (3, 4):
                 continue
 
-            data = raw[4:]
-            frame = DeucalionFrame(op=op, channel=channel, data=data)
+            # op=3: Recv (server->client), op=4: Send (client->server)
+            # data is the raw IPC message
+            frame = DeucalionFrame(op=op, channel=op, data=data)
             for cb in self._callbacks:
                 try:
                     cb(frame)
