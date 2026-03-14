@@ -25,13 +25,26 @@ def make_action_effect1_payload(
     target_id: int = 0x87654321,
     damage: int = 5000,
 ) -> bytes:
+    """Build an ActionEffect1 IPC payload matching Sapphire/Machina struct layout.
+
+    Offsets (hex):
+      0x00: animationTargetId (u32)
+      0x08: actionId (u32)
+      0x1C: actionAnimationId (u16)
+      0x21: effectCount (u8)
+      0x24: effects[8] (8 x 8 bytes)
+      0x68: targetId[0] (u64)
+    """
     buf = bytearray(256)
-    struct.pack_into('<I', buf, 0, source_id)
-    struct.pack_into('<I', buf, 4, action_id)
-    struct.pack_into('<H', buf, 8, action_id)  # animation_id
-    struct.pack_into('<B', buf, 20, 1)          # num_targets = 1
-    struct.pack_into('<BBHBBH', buf, 24, 3, 0, damage & 0xFFFF, 0, 0, 0)
-    struct.pack_into('<I', buf, 88, target_id)
+    struct.pack_into('<I', buf, 0x00, target_id)   # animationTargetId (target, not source)
+    struct.pack_into('<I', buf, 0x08, action_id)   # actionId
+    struct.pack_into('<H', buf, 0x1C, action_id)   # actionAnimationId
+    struct.pack_into('<B', buf, 0x21, 1)            # effectCount = 1
+    # Effect entry at 0x24: type=3 (damage), flags=0, value=damage in bits 16-31
+    effect_lo = 3 | ((damage & 0xFFFF) << 16)      # type DAMAGE + raw damage
+    struct.pack_into('<I', buf, 0x24, effect_lo)
+    struct.pack_into('<I', buf, 0x28, 0)            # effect hi
+    struct.pack_into('<Q', buf, 0x68, target_id)    # targetId (u64)
     return bytes(buf)
 
 def test_action_effect_handler_writes_log():

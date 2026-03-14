@@ -27,18 +27,36 @@ class ActionEffectHandler:
     """
     Handles ActionEffect1/8/16/24/32 packets.
     target_count: 1, 8, 16, 24, or 32 - used to determine AOE vs single.
-    Exact struct layout: Machina Server_ActionEffect<N> (confirmed via decompilation).
+    Struct layout: Sapphire/Machina Server_ActionEffect<N>.
+
+    Source actor comes from the segment header (IPCHeader.source_actor),
+    NOT from the IPC payload.
     """
-    # Struct offsets within the IPC payload (after 16-byte IPC header stripped by router)
-    _OFF_SOURCE_ID   = 0
-    _OFF_ACTION_ID   = 4
-    _OFF_ANIM_ID     = 8
-    _OFF_ROTATION    = 10
-    _OFF_ANIM_LOCK   = 12
-    _OFF_EFFECT_DISP = 16
-    _OFF_NUM_TARGETS = 18
-    _OFF_EFFECTS     = 24   # 8 bytes * 8 effects = 64 bytes
-    _OFF_TARGET_ID   = 88
+    # Struct offsets within the IPC payload (after segment+IPC headers stripped by router)
+    # 0x00: animationTargetId (u32) - target the animation plays on
+    # 0x04: unknown (u32)
+    # 0x08: actionId (u32) - the actual action/spell ID
+    # 0x0C: globalSequence (u32)
+    # 0x10: animationLockTime (f32)
+    # 0x14: someTargetId (u32)
+    # 0x18: sourceSequence (u16)
+    # 0x1A: rotation (u16)
+    # 0x1C: actionAnimationId (u16)
+    # 0x1E: variation (u8)
+    # 0x1F: effectDisplayType (u8)
+    # 0x20: unknown (u8)
+    # 0x21: effectCount (u8)
+    # 0x22: padding (u16)
+    # 0x24: effects[8] (8 entries x 8 bytes = 64 bytes)
+    # 0x64: padding (u32)
+    # 0x68: targetId[0] (u64, first target)
+    _OFF_ANIM_TARGET = 0x00
+    _OFF_ACTION_ID   = 0x08
+    _OFF_ROTATION    = 0x1A
+    _OFF_EFFECT_DISP = 0x1F
+    _OFF_NUM_TARGETS = 0x21
+    _OFF_EFFECTS     = 0x24   # 8 bytes * 8 effects = 64 bytes
+    _OFF_TARGET_ID   = 0x68
 
     def __init__(self, opcode: int, log_writer: LogWriter, combatant_manager, target_count: int):
         self._opcode = opcode
@@ -48,13 +66,15 @@ class ActionEffectHandler:
 
     def __call__(self, header: IPCHeader):
         payload = header.payload
-        if len(payload) < self._OFF_TARGET_ID + 4:
+        if len(payload) < self._OFF_TARGET_ID + 8:
             log.debug(f"ActionEffect payload too short: {len(payload)}")
             return
 
-        source_id = struct.unpack_from('<I', payload, self._OFF_SOURCE_ID)[0]
+        # Source actor comes from the segment header, not the payload
+        source_id = header.source_actor
         action_id = struct.unpack_from('<I', payload, self._OFF_ACTION_ID)[0]
-        target_id = struct.unpack_from('<I', payload, self._OFF_TARGET_ID)[0]
+        # Target IDs are u64 in the target list
+        target_id = struct.unpack_from('<Q', payload, self._OFF_TARGET_ID)[0] & 0xFFFFFFFF
 
         source = self._combatants.get_by_id(source_id)
         target = self._combatants.get_by_id(target_id)
@@ -72,6 +92,22 @@ class ActionEffectHandler:
                 effects.append((effect_data & 0xFFFFFFFF, effect_data >> 32))
 
         effect_str = '|'.join(f"{lo:X}|{hi:X}" for lo, hi in effects)
+
+        # Extract damage from the first effect entry that has type DAMAGE (3)
+        self.last_damage = 0
+        self.last_source_id = source_id
+        self.last_target_id = target_id
+        for lo, hi in effects:
+            effect_type = lo & 0xFF
+            if effect_type == EFFECT_TYPE_DAMAGE:
+                # Damage value is in the high 16 bits of lo + flags
+                raw_damage = (lo >> 16) & 0xFFFF
+                flags = (lo >> 8) & 0xFF
+                # If flag bit 6 is set, damage is shifted left by 16
+                if flags & 0x40:
+                    raw_damage |= (hi & 0xFFFF) << 16
+                self.last_damage = raw_damage
+                break
 
         msg_type = LogMessageType.ActionEffect if self._target_count == 1 else LogMessageType.AOEActionEffect
         payload_str = (

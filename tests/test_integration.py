@@ -52,11 +52,14 @@ def test_full_pipeline_writes_log(tmp_path):
 
     router.register(0x00A3, combined_handler)
 
-    # Build IPC payload
+    # Build IPC payload (Sapphire/Machina ActionEffect1 layout)
     ipc_payload = bytearray(256)
-    struct.pack_into('<I', ipc_payload, 0, 0x12345678)  # source_id
-    struct.pack_into('<I', ipc_payload, 4, 0x0009)       # action_id
-    struct.pack_into('<I', ipc_payload, 88, 0x87654321)  # target_id
+    struct.pack_into('<I', ipc_payload, 0x00, 0x87654321)  # animationTargetId
+    struct.pack_into('<I', ipc_payload, 0x08, 0x0009)       # actionId
+    # Effect entry: type=3 (damage), damage=5000 in bits 16-31
+    effect_lo = 3 | (5000 << 16)
+    struct.pack_into('<I', ipc_payload, 0x24, effect_lo)
+    struct.pack_into('<Q', ipc_payload, 0x68, 0x87654321)   # targetId (u64)
 
     # Build segment header (16 bytes) + IPC header (16 bytes) + payload
     seg_header = struct.pack('<II8s', 0x12345678, 0x87654321, b'\x00' * 8)

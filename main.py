@@ -44,9 +44,12 @@ def build_router(cfg: Config, writer: LogWriter, memory: MemoryReader,
         )
         def handle(header):
             h(header)
-            # Feed into encounter state
+            # Feed real values into encounter state
             enc_mgr.on_action_effect(
-                source_id=0, target_id=0, damage=0, timestamp=header.timestamp
+                source_id=h.last_source_id,
+                target_id=h.last_target_id,
+                damage=h.last_damage,
+                timestamp=header.timestamp
             )
         return handle
 
