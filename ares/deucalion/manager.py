@@ -267,36 +267,50 @@ class DeucalionManager:
     def _read_frames(self):
         """Read Deucalion v1.5 frames from pipe.
 
-        Wire format: length(u32 LE) | op(u8) | ctx(u32 LE) | data(bytes)
+        Wire format per frame: length(u32 LE) | op(u8) | ctx(u32 LE) | data(bytes)
         - length: total frame size including the 4-byte length field
         - op: 0=Debug, 1=Ping, 2=Exit, 3=Recv, 4=Send, 9=Option
         - ctx: context (unused by us)
         - data: IPC payload (length - 9 bytes)
+
+        Multiple frames can be concatenated in a single pipe message.
         """
         while self._running and self._pipe_handle is not None:
             raw = _read_from_pipe(self._pipe_handle)
-            if len(raw) < 9:
-                # Minimum frame: 4(len) + 1(op) + 4(ctx) = 9 bytes
-                if len(raw) >= 5:
-                    frame_len, op = struct.unpack_from('<IB', raw, 0)
-                    log.debug(f"Short frame: op={op} len={frame_len} raw={len(raw)}")
-                continue
+            self._parse_buffer(raw)
 
-            frame_len, op, ctx = struct.unpack_from('<IBI', raw, 0)
-            data = raw[9:]
+    def _parse_buffer(self, raw: bytes):
+        """Parse one or more Deucalion frames from a buffer."""
+        offset = 0
+        while offset + 9 <= len(raw):
+            frame_len, op, ctx = struct.unpack_from('<IBI', raw, offset)
 
-            log.debug(f"Frame: op={op} ctx={ctx} frame_len={frame_len} "
-                      f"data_len={len(data)} raw_len={len(raw)}")
+            if frame_len < 9:
+                log.debug(f"Invalid frame_len={frame_len} at offset {offset}")
+                break
 
-            # op=1: Ping, op=2: Exit, op=9: Option -- skip
-            if op not in (3, 4):
-                continue
+            # Extract data for this frame
+            data_start = offset + 9
+            data_end = offset + frame_len
+            data = raw[data_start:data_end]
 
-            # op=3: Recv (server->client), op=4: Send (client->server)
-            # data is the raw IPC message
-            frame = DeucalionFrame(op=op, channel=op, data=data)
-            for cb in self._callbacks:
-                try:
-                    cb(frame)
-                except Exception as e:
-                    log.warning(f"Frame callback error: {e}")
+            if op in (3, 4):
+                # op=3: Recv (server->client), op=4: Send (client->server)
+                if len(data) >= 16:
+                    # Log the IPC opcode for debugging
+                    ipc_opcode = struct.unpack_from('<H', data, 2)[0]
+                    log.debug(f"IPC frame: op={op} ipc_opcode=0x{ipc_opcode:04X} "
+                              f"data_len={len(data)}")
+
+                frame = DeucalionFrame(op=op, channel=op, data=data)
+                for cb in self._callbacks:
+                    try:
+                        cb(frame)
+                    except Exception as e:
+                        log.warning(f"Frame callback error: {e}")
+
+            # Move to next frame
+            offset += frame_len
+
+        if offset < len(raw):
+            log.debug(f"Leftover {len(raw) - offset} bytes after parsing")
