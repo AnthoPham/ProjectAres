@@ -104,7 +104,11 @@ def main():
                         help='Self-inject Deucalion DLL (requires Admin). '
                              'Default: connect to existing pipe from ACT/Machina.')
     parser.add_argument('--port', type=int, default=5055, help='Dashboard port (default: 5055)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug logging')
     args = parser.parse_args()
+
+    if args.debug:
+        logging.getLogger().setLevel(logging.DEBUG)
 
     log.info("Project Ares starting...")
     if not args.inject:
