@@ -1,0 +1,7 @@
+pymem==1.12.0
+flask==3.1.0
+flask-socketio==5.5.1
+pywin32==308
+pytest==8.3.5
+pytest-mock==3.14.0
+psutil==6.1.1

@@ -1,0 +1,10 @@
+{
+  "_patch": "7.3",
+  "_updated": "2026-03-13",
+  "_source": "https://github.com/aers/FFXIVClientStructs",
+  "actor_table":      "0x1D23A80",
+  "actor_table_size": 624,
+  "player_id":        "0x1D2FD20",
+  "territory_id":     "0x1D27508",
+  "server_time":      "0x1D27510"
+}
