@@ -32,9 +32,10 @@ def test_unknown_opcode_returns_zero(tmp_path):
 
 def test_all_action_effect_opcodes_loaded():
     cfg = Config()
+    assert cfg.opcode("ActionEffect1") == 0x0178
     for variant in [1, 8, 16, 24, 32]:
         assert cfg.opcode(f"ActionEffect{variant}") != 0
 
 def test_patch_version():
     cfg = Config()
-    assert cfg.patch == "7.3"
+    assert cfg.patch == "7.x"
