@@ -3,7 +3,11 @@
 Project Ares - FFXIV Combat Log Parser
 Run with: "D:/Anaconda3/envs/ProjectClaude/python.exe" main.py
 Access dashboard at: http://localhost:5055
+
+By default, connects to an existing Deucalion pipe (from ACT/Machina).
+Use --inject to self-inject the DLL (requires Administrator).
 """
+import argparse
 import logging
 import threading
 import time
@@ -95,7 +99,17 @@ def broadcast_loop(socketio, session: Session):
 
 
 def main():
+    parser = argparse.ArgumentParser(description='Project Ares - FFXIV Combat Log Parser')
+    parser.add_argument('--inject', action='store_true',
+                        help='Self-inject Deucalion DLL (requires Admin). '
+                             'Default: connect to existing pipe from ACT/Machina.')
+    parser.add_argument('--port', type=int, default=5055, help='Dashboard port (default: 5055)')
+    args = parser.parse_args()
+
     log.info("Project Ares starting...")
+    if not args.inject:
+        log.info("Passive mode: will connect to existing Deucalion pipe. "
+                 "Use --inject to self-inject.")
 
     cfg = Config()
     log.info(f"Loaded config for patch {cfg.patch}")
@@ -105,7 +119,7 @@ def main():
     writer.open_session(datetime.now(timezone.utc))
     memory = MemoryReader(cfg)
 
-    deucalion = DeucalionManager(dll_path='bin/deucalion.dll')
+    deucalion = DeucalionManager(dll_path='bin/deucalion.dll', allow_inject=args.inject)
     app, socketio = create_app(session=session, deucalion_mgr=deucalion)
 
     # Register encounter callbacks to broadcast over WebSocket
@@ -131,8 +145,8 @@ def main():
             time.sleep(1.0)
     threading.Thread(target=tick_loop, daemon=True).start()
 
-    log.info("Dashboard available at http://localhost:5055")
-    socketio.run(app, host='0.0.0.0', port=5055)
+    log.info(f"Dashboard available at http://localhost:{args.port}")
+    socketio.run(app, host='0.0.0.0', port=args.port)
 
 
 if __name__ == '__main__':

@@ -12,8 +12,14 @@ from ares.parser.router import DeucalionFrame
 
 log = logging.getLogger(__name__)
 
-PIPE_NAME = r'\\.\pipe\deucalion'
+PIPE_BASE = r'\\.\pipe\deucalion-'
 FFXIV_EXE = 'ffxiv_dx11.exe'
+
+# Win32 constants for named pipe access
+GENERIC_READ = 0x80000000
+GENERIC_WRITE = 0x40000000
+OPEN_EXISTING = 3
+INVALID_HANDLE_VALUE = ctypes.wintypes.HANDLE(-1).value
 
 
 def find_ffxiv_pid() -> Optional[int]:
@@ -23,6 +29,62 @@ def find_ffxiv_pid() -> Optional[int]:
         if proc.info['name'] and proc.info['name'].lower() == FFXIV_EXE:
             return proc.info['pid']
     return None
+
+
+def _pipe_exists(pid: int) -> bool:
+    """Check if Deucalion named pipe already exists for this PID."""
+    pipe_name = f"{PIPE_BASE}{pid}"
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.CreateFileW(
+        pipe_name,
+        GENERIC_READ | GENERIC_WRITE,
+        0, None, OPEN_EXISTING, 0, None
+    )
+    if handle == INVALID_HANDLE_VALUE:
+        return False
+    kernel32.CloseHandle(handle)
+    return True
+
+
+def _open_pipe(pid: int) -> Optional[int]:
+    """Open Deucalion named pipe using Win32 API. Returns handle or None."""
+    pipe_name = f"{PIPE_BASE}{pid}"
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.CreateFileW(
+        pipe_name,
+        GENERIC_READ | GENERIC_WRITE,
+        0, None, OPEN_EXISTING, 0, None
+    )
+    if handle == INVALID_HANDLE_VALUE:
+        return None
+    return handle
+
+
+def _read_pipe(handle: int, size: int) -> bytes:
+    """Read exactly size bytes from a Win32 pipe handle."""
+    buf = ctypes.create_string_buffer(size)
+    bytes_read = ctypes.wintypes.DWORD(0)
+    result = ctypes.windll.kernel32.ReadFile(
+        handle, buf, size, ctypes.byref(bytes_read), None
+    )
+    if not result or bytes_read.value == 0:
+        raise OSError("Pipe read failed or closed")
+    if bytes_read.value < size:
+        # Partial read -- collect remaining
+        remaining = size - bytes_read.value
+        data = buf.raw[:bytes_read.value]
+        while remaining > 0:
+            buf2 = ctypes.create_string_buffer(remaining)
+            bytes_read2 = ctypes.wintypes.DWORD(0)
+            result = ctypes.windll.kernel32.ReadFile(
+                handle, buf2, remaining, ctypes.byref(bytes_read2), None
+            )
+            if not result or bytes_read2.value == 0:
+                raise OSError("Pipe read failed during partial read")
+            data += buf2.raw[:bytes_read2.value]
+            remaining -= bytes_read2.value
+        return data
+    return buf.raw[:bytes_read.value]
 
 
 def _inject_dll(pid: int, dll_path: str) -> bool:
@@ -68,9 +130,11 @@ FrameCallback = Callable[[DeucalionFrame], None]
 class DeucalionManager:
     RECONNECT_INTERVAL = 3.0
 
-    def __init__(self, dll_path: str = 'bin/deucalion.dll'):
+    def __init__(self, dll_path: str = 'bin/deucalion.dll', allow_inject: bool = False):
         self._dll_path = dll_path
-        self._pipe = None
+        self._allow_inject = allow_inject
+        self._pipe_handle = None
+        self._pid: Optional[int] = None
         self._callbacks: list[FrameCallback] = []
         self._running = False
         self._thread: Optional[threading.Thread] = None
@@ -88,21 +152,49 @@ class DeucalionManager:
             log.debug("FFXIV not running")
             return False
 
+        self._pid = pid
+
+        # Step 1: Try connecting to existing pipe (injected by ACT/Machina)
+        if _pipe_exists(pid):
+            log.info(f"Found existing Deucalion pipe for PID {pid}")
+            return self._connect_pipe(pid)
+
+        # Step 2: No existing pipe -- inject if allowed
+        if not self._allow_inject:
+            log.info(f"No Deucalion pipe found for PID {pid}. "
+                     f"Start ACT/Machina first, or use --inject flag.")
+            return False
+
+        log.info(f"No existing pipe found. Injecting Deucalion into PID {pid}...")
+        if not os.path.exists(self._dll_path):
+            log.error(f"Deucalion DLL not found at {self._dll_path}")
+            return False
+
         if not _inject_dll(pid, self._dll_path):
             log.warning("DLL injection failed")
             return False
 
-        # Give Deucalion time to initialize
-        time.sleep(1.0)
+        # Wait for Deucalion to initialize and create the pipe
+        for attempt in range(10):
+            time.sleep(0.5)
+            if _pipe_exists(pid):
+                log.info(f"Deucalion pipe appeared after {(attempt + 1) * 0.5:.1f}s")
+                return self._connect_pipe(pid)
 
-        try:
-            self._pipe = open(PIPE_NAME, 'rb')
-            self.connected = True
-            log.info("Connected to Deucalion named pipe")
-            return True
-        except OSError as e:
-            log.warning(f"Could not open Deucalion pipe: {e}")
+        log.warning("Deucalion pipe did not appear after injection")
+        return False
+
+    def _connect_pipe(self, pid: int) -> bool:
+        """Connect to Deucalion named pipe for given PID."""
+        handle = _open_pipe(pid)
+        if handle is None:
+            log.warning(f"Could not open Deucalion pipe for PID {pid}")
             return False
+
+        self._pipe_handle = handle
+        self.connected = True
+        log.info(f"Connected to Deucalion pipe for PID {pid}")
+        return True
 
     def start(self):
         self._running = True
@@ -112,11 +204,12 @@ class DeucalionManager:
     def stop(self):
         self._running = False
         self.connected = False
-        if self._pipe:
+        if self._pipe_handle is not None:
             try:
-                self._pipe.close()
+                ctypes.windll.kernel32.CloseHandle(self._pipe_handle)
             except Exception:
                 pass
+            self._pipe_handle = None
         if self._thread:
             self._thread.join(timeout=3.0)
 
@@ -129,32 +222,31 @@ class DeucalionManager:
 
             try:
                 self._read_frames()
-            except (OSError, BrokenPipeError) as e:
+            except OSError as e:
                 log.warning(f"Pipe disconnected: {e}")
                 self.connected = False
-                if self._pipe:
+                if self._pipe_handle is not None:
                     try:
-                        self._pipe.close()
+                        ctypes.windll.kernel32.CloseHandle(self._pipe_handle)
                     except Exception:
                         pass
-                    self._pipe = None
+                    self._pipe_handle = None
 
     def _read_frames(self):
-        while self._running and self._pipe:
+        while self._running and self._pipe_handle is not None:
             # Read 4-byte frame header
-            header = self._pipe.read(4)
-            if len(header) < 4:
-                raise OSError("Pipe closed")
+            header = _read_pipe(self._pipe_handle, 4)
 
             op, channel, length = struct.unpack('<BBH', header)
 
-            # Respond to ping with pong
+            # Skip ping frames
             if op == 3:
                 continue
 
-            data = self._pipe.read(length)
-            if len(data) < length:
-                raise OSError("Incomplete frame")
+            if length == 0:
+                continue
+
+            data = _read_pipe(self._pipe_handle, length)
 
             frame = DeucalionFrame(op=op, channel=channel, data=data)
             for cb in self._callbacks:
